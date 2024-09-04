@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                             Suivi_Tendance_Multi_Indicateurs.mq5 |
+//|                           Suivi_Tendance_Multi_IndicateursV2.mq5 |
 //|                                                  Ibrahima DIALLO |
 //|                                                                  |
 //+------------------------------------------------------------------+
@@ -14,7 +14,7 @@ double totalLoss = 0.0;            // Suivi des pertes réalisées
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
-  {
+{
    // Initialisation du capital initial et calcul de la perte maximale autorisée
    initialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    maxLossAmount = initialBalance * maxLossPercentage; // 5% du capital initial
@@ -22,22 +22,70 @@ int OnInit()
    Print("EA démarré avec un solde initial de : ", initialBalance);
    Print("Perte maximale autorisée : ", maxLossAmount);
 
+   // Vérification des indicateurs
+   if (!InitializeIndicators())
+   {
+      Print("Erreur lors de l'initialisation des indicateurs.");
+      return(INIT_FAILED);
+   }
+
    return(INIT_SUCCEEDED);
-  }
+}
+//+------------------------------------------------------------------+
+//| Fonction pour initialiser les indicateurs                        |
+//+------------------------------------------------------------------+
+bool InitializeIndicators()
+{
+   bool success = true;
+
+   // Initialisation des handles d'indicateurs
+   int emaHandle = iMA(_Symbol, _Period, 50, 0, MODE_EMA, PRICE_CLOSE);
+   if (emaHandle == INVALID_HANDLE)
+   {
+      Print("Erreur lors de l'initialisation de l'EMA");
+      success = false;
+   }
+
+   int rsiHandle = iRSI(_Symbol, _Period, 14, PRICE_CLOSE);
+   if (rsiHandle == INVALID_HANDLE)
+   {
+      Print("Erreur lors de l'initialisation du RSI");
+      success = false;
+   }
+
+   int macdHandle = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE);
+   if (macdHandle == INVALID_HANDLE)
+   {
+      Print("Erreur lors de l'initialisation du MACD");
+      success = false;
+   }
+
+   int atrHandle = iATR(_Symbol, _Period, 14);
+   if (atrHandle == INVALID_HANDLE)
+   {
+      Print("Erreur lors de l'initialisation de l'ATR");
+      success = false;
+   }
+
+   return success;
+}
+
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
-  {
-   // Code de désinitialisation si nécessaire
-  }
+{
+   // Log la désinitialisation de l'EA
+   Print("Désinitialisation de l'EA. Raison: ", reason);
+}
+
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
-  {
+{
    // Vérifier si la perte maximale est atteinte
-   if(CheckMaxLossReached())
+   if (CheckMaxLossReached())
    {
       Print("Perte maximale atteinte. Aucun nouveau trade ne sera pris.");
       return; // Arrêter l'exécution si la perte maximale est atteinte
@@ -45,32 +93,58 @@ void OnTick()
 
    // Paramètres de la stratégie
    double riskPerTrade = 0.01;       // Risque en pourcentage par trade (1% du capital)
-   int emaPeriod = 50;               // Période de l'EMA
-   int rsiPeriod = 14;               // Période du RSI
    double rsiOverbought = 70;        // Seuil de surachat RSI
    double rsiOversold = 30;          // Seuil de survente RSI
-   int atrPeriod = 14;               // Période de l'ATR (pour calculer SL et TP dynamiques)
 
    // Récupérer les informations du marché
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   
+
    // Calcul des indicateurs techniques
-   double emaValue = iMA(_Symbol, _Period, emaPeriod, 0, MODE_EMA, PRICE_CLOSE, 0);
-   double rsiValue = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE, 0);
-   double macdMain = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE, MODE_MAIN, 0);
-   double macdSignal = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE, MODE_SIGNAL, 0);
-   double atrValue = iATR(_Symbol, _Period, atrPeriod, 0); // Calculer l'ATR
+   double emaValue[], rsiValue[], macdMain[], macdSignal[], atrValue[];
+
+   // Récupération des valeurs EMA
+   if (CopyBuffer(iMA(_Symbol, _Period, 50, 0, MODE_EMA, PRICE_CLOSE), 0, 0, 1, emaValue) <= 0)
+   {
+      Print("Erreur lors de la récupération de l'EMA");
+      return;
+   }
+
+   // Récupération des valeurs RSI
+   if (CopyBuffer(iRSI(_Symbol, _Period, 14, PRICE_CLOSE), 0, 0, 1, rsiValue) <= 0)
+   {
+      Print("Erreur lors de la récupération du RSI");
+      return;
+   }
+
+   // Récupération des valeurs MACD (Main et Signal)
+   if (CopyBuffer(iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE), 0, 0, 1, macdMain) <= 0)
+   {
+      Print("Erreur lors de la récupération du MACD Main");
+      return;
+   }
+
+   if (CopyBuffer(iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE), 1, 0, 1, macdSignal) <= 0)
+   {
+      Print("Erreur lors de la récupération du MACD Signal");
+      return;
+   }
+
+   // Récupération des valeurs ATR
+   if (CopyBuffer(iATR(_Symbol, _Period, 14), 0, 0, 1, atrValue) <= 0)
+   {
+      Print("Erreur lors de la récupération de l'ATR");
+      return;
+   }
 
    // Gestion des positions ouvertes
    int totalPositions = PositionsTotal();
    bool isPositionOpen = false;
-   
-   for(int i = 0; i < totalPositions; i++)
+
+   for (int i = 0; i < totalPositions; i++)
    {
-      if(PositionSelect(_Symbol))
+      if (PositionSelect(_Symbol))
       {
          isPositionOpen = true;
          break;
@@ -78,41 +152,69 @@ void OnTick()
    }
 
    // Conditions d'entrée dans le marché (achat si prix > EMA, RSI < 70, et MACD > Signal)
-   if(!isPositionOpen)
+   if (!isPositionOpen)
    {
-      // Calcul du lot en fonction du risque
-      double lot = CalculateLotSize(riskPerTrade, atrValue * 2);  // ATR utilisé pour ajuster la taille du SL
-      double stopLossPips = atrValue * 2;  // Utilisation de 2 fois l'ATR pour le Stop Loss
-      double takeProfitPips = atrValue * 4;  // Take Profit basé sur 4 fois l'ATR
+      double lot = CalculateLotSize(riskPerTrade, atrValue[0] * 2); // ATR utilisé pour ajuster la taille du SL
+      double stopLossPips = atrValue[0] * 2;
+      double takeProfitPips = atrValue[0] * 4;
 
-      if(bid > emaValue && rsiValue < rsiOverbought && macdMain > macdSignal) // Achat
+      // Exécuter un achat
+      if (bid > emaValue[0] && rsiValue[0] < rsiOverbought && macdMain[0] > macdSignal[0]) // Achat
       {
-         double stopLoss = bid - stopLossPips * point;
-         double takeProfit = bid + takeProfitPips * point;
-         OrderSend(_Symbol, OP_BUY, lot, ask, 2, stopLoss, takeProfit, "Achat Suivi de Tendance", 0, 0, clrGreen);
+         if (!PlaceOrder(ORDER_TYPE_BUY, lot, ask, bid - stopLossPips * point, bid + takeProfitPips * point))
+            Print("Erreur lors de l'envoi de l'ordre d'achat");
       }
-      else if(bid < emaValue && rsiValue > rsiOversold && macdMain < macdSignal) // Vente
+      // Exécuter une vente
+      else if (bid < emaValue[0] && rsiValue[0] > rsiOversold && macdMain[0] < macdSignal[0]) // Vente
       {
-         double stopLoss = ask + stopLossPips * point;
-         double takeProfit = ask - takeProfitPips * point;
-         OrderSend(_Symbol, OP_SELL, lot, bid, 2, stopLoss, takeProfit, "Vente Suivi de Tendance", 0, 0, clrRed);
+         if (!PlaceOrder(ORDER_TYPE_SELL, lot, bid, ask + stopLossPips * point, ask - takeProfitPips * point))
+            Print("Erreur lors de l'envoi de l'ordre de vente");
       }
    }
-  }
+}
+//+------------------------------------------------------------------+
+//| Fonction pour envoyer les ordres de trading                      |
+//+------------------------------------------------------------------+
+bool PlaceOrder(int orderType, double lot, double price, double stopLoss, double takeProfit)
+{
+   MqlTradeRequest request;
+   MqlTradeResult result;
+
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = lot;
+   request.type = orderType;
+   request.price = price;
+   request.sl = stopLoss;
+   request.tp = takeProfit;
+   request.deviation = 2;
+   request.magic = 123456;
+
+   if (!OrderSend(request, result))
+   {
+      Print("Erreur lors de l'envoi de l'ordre : ", GetLastError());
+      return false;
+   }
+
+   return true;
+}
+
 //+------------------------------------------------------------------+
 //| Calcul de la taille du lot en fonction du risque                 |
 //+------------------------------------------------------------------+
 double CalculateLotSize(double riskPerTrade, double stopLossPips)
 {
    double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double lotStep = MarketInfo(_Symbol, MODE_MINLOT);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double riskAmount = accountBalance * riskPerTrade; // Risque en fonction du solde du compte
 
-   double pipValue = MarketInfo(_Symbol, MODE_TICKVALUE);
+   double pipValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double lotSize = riskAmount / (stopLossPips * pipValue);
 
-   lotSize = MathMax(lotStep, NormalizeDouble(lotSize, 2)); // Ajuster la taille du lot au minimum permis
-   return lotSize;
+   return MathMax(lotStep, NormalizeDouble(lotSize, 2)); // Ajuster la taille du lot au minimum permis
 }
 
 //+------------------------------------------------------------------+
@@ -123,18 +225,18 @@ bool CheckMaxLossReached()
    // Calculer le total des pertes réalisées
    double realizedLoss = 0.0;
 
-   for(int i = 0; i < HistoryDealsTotal(); i++)
+   for (int i = 0; i < HistoryDealsTotal(); i++)
    {
       ulong ticket = HistoryDealGetTicket(i);
-      if(HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol)
+      if (HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol)
       {
          double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
-         if(profit < 0) realizedLoss += profit;
+         if (profit < 0) realizedLoss += profit;
       }
    }
 
    // Vérifier si la perte maximale est atteinte
-   if(MathAbs(realizedLoss) >= maxLossAmount)
+   if (MathAbs(realizedLoss) >= maxLossAmount)
    {
       Print("Perte maximale de ", maxLossAmount, " atteinte. Trading arrêté.");
       return true;  // Arrêter la prise de nouvelles positions
