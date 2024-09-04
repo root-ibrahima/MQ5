@@ -1,6 +1,8 @@
 import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
+import time
 
 # Variables globales pour la gestion des risques
 initial_balance = 0.0  # Solde initial au démarrage de l'EA
@@ -54,16 +56,30 @@ def get_indicators(symbol, timeframe):
                                      abs(df['low'] - df['close'].shift(1))))
     df['atr'] = df['tr'].rolling(window=14).mean()
 
+    print(f"[LOG] Derniers indicateurs pour {symbol} (timeframe {timeframe}):")
+    print(f"  EMA: {df['ema'].iloc[-1]:.6f}, RSI: {df['rsi'].iloc[-1]:.2f}, MACD: {df['macd'].iloc[-1]:.6f}, MACD Signal: {df['macd_signal'].iloc[-1]:.6f}, ATR: {df['atr'].iloc[-1]:.6f}")
+    
     return df.iloc[-1]  # Retourner les dernières valeurs
 
 # Fonction pour vérifier si la perte maximale est atteinte
 def check_max_loss_reached():
-    # Obtenir l'historique des transactions réalisées
-    history_deals = mt5.history_deals_get()
+    # Définir une plage de dates (par exemple, récupérer les transactions des 30 derniers jours)
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=30)  # Utiliser timedelta pour soustraire 30 jours
+
+    # Obtenir l'historique des transactions pour la période définie
+    history_deals = mt5.history_deals_get(start_time, end_time)
+
+    if history_deals is None:
+        print("[LOG] Erreur : impossible de récupérer l'historique des transactions")
+        return False
+
+    # Calculer le total des pertes réalisées
     realized_loss = sum([deal.profit for deal in history_deals if deal.profit < 0])
-    
+
+    print(f"[LOG] Pertes réalisées sur 30 jours : {realized_loss}")
     if abs(realized_loss) >= max_loss_amount:
-        print(f"Perte maximale de {max_loss_amount} atteinte. Trading arrêté.")
+        print(f"[LOG] Perte maximale de {max_loss_amount} atteinte. Trading arrêté.")
         return True
     return False
 
@@ -79,7 +95,7 @@ def calculate_lot_size(risk_per_trade, stop_loss_pips, symbol):
     min_volume = mt5.symbol_info(symbol).volume_min
     lot_size = max(min_volume, round(lot_size, 2))
     
-    print(f"Taille de lot ajustée : {lot_size}")
+    print(f"[LOG] Taille de lot calculée : {lot_size}")
     return lot_size
 
 # Fonction pour envoyer les ordres de trading
@@ -99,35 +115,43 @@ def place_order(order_type, lot, symbol, price, stop_loss, take_profit):
     
     result = mt5.order_send(request)
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"Erreur lors de l'envoi de l'ordre : {result.retcode}")
-        print(f"Détails de l'ordre - Volume: {lot}, Prix: {price}, SL: {stop_loss}, TP: {take_profit}")
+        print(f"[LOG] Erreur lors de l'envoi de l'ordre : {result.retcode}")
+        print(f"[LOG] Détails de l'ordre - Volume: {lot}, Prix: {price}, SL: {stop_loss}, TP: {take_profit}")
         return False
+    print(f"[LOG] Ordre exécuté avec succès. Détails : {result}")
     return True
 
 # Fonction principale de la stratégie
 def strategy(symbol, timeframe):
     if check_max_loss_reached():
+        print(f"[LOG] Perte maximale atteinte pour {symbol}. Arrêt de la stratégie.")
         return
 
     indicators = get_indicators(symbol, timeframe)
-    print(f"Indicateurs pour {symbol}: EMA={indicators['ema']}, RSI={indicators['rsi']}, MACD={indicators['macd']}, ATR={indicators['atr']}")
-
     ask = mt5.symbol_info_tick(symbol).ask
     bid = mt5.symbol_info_tick(symbol).bid
     
+    print(f"[LOG] Prix de l'actif {symbol} : Bid={bid}, Ask={ask}")
+    
     # Conditions d'achat/vente
-    if indicators['rsi'] < 70 and indicators['macd'] > indicators['macd_signal'] and bid > indicators['ema']:
-        lot = calculate_lot_size(0.01, indicators['atr'] * 2, symbol)
-        stop_loss = bid - indicators['atr'] * 2
-        take_profit = bid + indicators['atr'] * 4
-        place_order(mt5.ORDER_TYPE_BUY, lot, symbol, ask, stop_loss, take_profit)
-    elif indicators['rsi'] > 30 and indicators['macd'] < indicators['macd_signal'] and bid < indicators['ema']:
+    if indicators['rsi'] > 70 and indicators['macd'] < indicators['macd_signal'] and bid < indicators['ema']:
+        print(f"[LOG] Condition de vente remplie pour {symbol}. RSI={indicators['rsi']:.2f}, MACD={indicators['macd']:.6f}, EMA={indicators['ema']:.6f}")
         lot = calculate_lot_size(0.01, indicators['atr'] * 2, symbol)
         stop_loss = ask + indicators['atr'] * 2
         take_profit = ask - indicators['atr'] * 4
         place_order(mt5.ORDER_TYPE_SELL, lot, symbol, bid, stop_loss, take_profit)
+    elif indicators['rsi'] < 30 and indicators['macd'] > indicators['macd_signal'] and bid > indicators['ema']:
+        print(f"[LOG] Condition d'achat remplie pour {symbol}. RSI={indicators['rsi']:.2f}, MACD={indicators['macd']:.6f}, EMA={indicators['ema']:.6f}")
+        lot = calculate_lot_size(0.01, indicators['atr'] * 2, symbol)
+        stop_loss = bid - indicators['atr'] * 2
+        take_profit = bid + indicators['atr'] * 4
+        place_order(mt5.ORDER_TYPE_BUY, lot, symbol, ask, stop_loss, take_profit)
+    else:
+        print(f"[LOG] Aucune condition de trading remplie pour {symbol}.")
 
-# Lancer la stratégie
+# Lancer la stratégie de manière récurrente toutes les 60 secondes
 if initialize_mt5():
-    strategy('EURUSD', mt5.TIMEFRAME_M1)
+    while True:
+        strategy('EURUSD', mt5.TIMEFRAME_M1)
+        time.sleep(60)  # Attendre 60 secondes avant la prochaine exécution
     mt5.shutdown()
